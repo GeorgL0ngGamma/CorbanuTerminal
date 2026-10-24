@@ -1,0 +1,17 @@
+name: Issue 1367 original-head macOS diagnostics
+
+on:
+  push:
+    branches:
+      - investigate/issue-1367-macos-20261024
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    uses: ./.github/workflows/rust-ci-core-security.yml
+    with:
+      runner: macos-15
+      target: aarch64-apple-darwin
+      save_cache: false

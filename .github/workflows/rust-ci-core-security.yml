@@ -76,6 +76,17 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-ci
+      - name: Record crash-report baseline
+        run: |
+          mkdir -p "$RUNNER_TEMP/issue-1367/crash-reports"
+          touch "$RUNNER_TEMP/issue-1367/started"
+          {
+            git rev-parse HEAD
+            sw_vers
+            uname -m
+            sysctl -n hw.ncpu hw.memsize
+            printf 'image=%s version=%s\n' "$ImageOS" "$ImageVersion"
+          } > "$RUNNER_TEMP/issue-1367/environment.txt"
       # bubblewrap: the integration tests run commands in the Linux sandbox,
       # as rust-ci-full's nextest job does.
       - name: Install Linux build dependencies
@@ -166,6 +177,46 @@ jobs:
         run: |
           cargo test --locked --target ${{ inputs.target }} -p codex-core --test all -- \
             suite::issue_506:: suite::issue_584:: suite::issue_620_622:: suite::issue_736_740:: suite::issue_747:: suite::issue_748::
+
+      - name: Collect test-process crash reports
+        if: always() && runner.os == 'macOS'
+        run: |
+          # ReportCrash can finish after the test process exits.
+          sleep 5
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          out = Path(os.environ["RUNNER_TEMP"]) / "issue-1367"
+          out.mkdir(exist_ok=True)
+          marker = out / "started"
+          cutoff = marker.stat().st_mtime if marker.exists() else float("inf")
+          copied = []
+          for root in (Path.home() / "Library/Logs/DiagnosticReports",
+                       Path("/Library/Logs/DiagnosticReports")):
+              if not root.exists():
+                  continue
+              for path in root.rglob("*"):
+                  if (path.is_file() and path.suffix in (".ips", ".crash")
+                          and path.name.startswith(("all-", "codex_core-"))
+                          and path.stat().st_mtime >= cutoff):
+                      destination = out / "crash-reports" / path.name
+                      destination.parent.mkdir(exist_ok=True)
+                      shutil.copy2(path, destination)
+                      copied.append(path.name)
+          (out / "reports.json").write_text(json.dumps(copied, indent=2) + "\n")
+          print(f"Collected {len(copied)} test-process crash reports")
+          PY
+
+      - name: Upload macOS diagnostic evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: issue-1367-macos-diagnostics
+          path: ${{ runner.temp }}/issue-1367/
+          retention-days: 14
 
       # Only main saves caches; PRs and branch runs restore main's (#636).
       - name: Save sccache cache
