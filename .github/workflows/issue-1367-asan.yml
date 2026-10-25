@@ -1,0 +1,45 @@
+name: Issue 1367 macOS AddressSanitizer investigation
+
+on:
+  push:
+    branches:
+      - investigate/issue-1367-asan-20261025
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CORBANU_TEST_NO_NATIVE_KEYRING: "1"
+      RUST_BACKTRACE: "1"
+      RUST_MIN_STACK: "8388608"
+      # Diagnostic-only: enable ASan on the exact pinned compiler.
+      # No production build or normal CI setting changes.
+      RUSTC_BOOTSTRAP: "1"
+      RUSTFLAGS: "-Zsanitizer=address -Cforce-frame-pointers=yes"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ci
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        with:
+          targets: aarch64-apple-darwin
+          components: llvm-tools-preview
+      - name: Build and investigate the original integration-test harness
+        run: python3 .github/scripts/issue-1367-asan.py
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: issue-1367-asan-evidence
+          path: ${{ runner.temp }}/issue-1367-asan/
+          retention-days: 14
+      - name: Check for a clean worktree
+        if: always() && !cancelled()
+        uses: ./.github/actions/check-clean-worktree
